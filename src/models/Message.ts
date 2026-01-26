@@ -10,6 +10,11 @@ export interface IMessage extends Document {
   fileName?: string;
   read: boolean;
   readAt?: Date;
+  edited: boolean;
+  editedAt?: Date;
+  replyTo?: mongoose.Types.ObjectId;
+  deleted: boolean;
+  deletedAt?: Date;
 }
 
 const messageSchema = new Schema<IMessage>({
@@ -41,7 +46,21 @@ const messageSchema = new Schema<IMessage>({
     type: Boolean,
     default: false
   },
-  readAt: Date
+  readAt: Date,
+  edited: {
+    type: Boolean,
+    default: false
+  },
+  editedAt: Date,
+  replyTo: {
+    type: Schema.Types.ObjectId,
+    ref: 'Message'
+  },
+  deleted: {
+    type: Boolean,
+    default: false
+  },
+  deletedAt: Date
 }, {
   timestamps: true
 });

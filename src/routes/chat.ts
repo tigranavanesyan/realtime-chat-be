@@ -37,6 +37,7 @@ router.get('/messages/:userId', authenticate, async (req: AuthRequest, res) => {
       ]
     })
       .populate('sender', 'username avatar')
+      .populate('replyTo', 'content sender')
       .sort({ createdAt: 1 });
 
     res.json(messages);
@@ -52,6 +53,14 @@ router.get('/groups/:groupId/messages', authenticate, async (req: AuthRequest, r
 
     const messages = await Message.find({ group: groupId })
       .populate('sender', 'username avatar')
+      .populate({
+        path: 'replyTo',
+        select: 'content sender',
+        populate: {
+          path: 'sender',
+          select: 'username avatar'
+        }
+      })
       .sort({ createdAt: 1 });
 
     res.json(messages);
@@ -106,6 +115,71 @@ router.post('/upload', authenticate, upload.single('file'), async (req: AuthRequ
 
     const fileUrl = `/uploads/${req.file.filename}`;
     res.json({ fileUrl, fileName: req.file.originalname });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Edit message
+router.put('/messages/:messageId', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { messageId } = req.params;
+    const { content } = req.body;
+    const currentUserId = req.user._id;
+
+    const message = await Message.findById(messageId);
+    if (!message) {
+      return res.status(404).json({ message: 'Message not found' });
+    }
+
+    // Check if user is the sender
+    if (message.sender.toString() !== currentUserId.toString()) {
+      return res.status(403).json({ message: 'You can only edit your own messages' });
+    }
+
+    // Check if message is deleted
+    if (message.deleted) {
+      return res.status(400).json({ message: 'Cannot edit deleted message' });
+    }
+
+    message.content = content;
+    message.edited = true;
+    message.editedAt = new Date();
+    await message.save();
+    await message.populate('sender', 'username avatar');
+    if (message.replyTo) {
+      await message.populate('replyTo', 'content sender');
+    }
+
+    res.json(message);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Delete message
+router.delete('/messages/:messageId', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { messageId } = req.params;
+    const currentUserId = req.user._id;
+
+    const message = await Message.findById(messageId);
+    if (!message) {
+      return res.status(404).json({ message: 'Message not found' });
+    }
+
+    // Check if user is the sender
+    if (message.sender.toString() !== currentUserId.toString()) {
+      return res.status(403).json({ message: 'You can only delete your own messages' });
+    }
+
+    message.deleted = true;
+    message.deletedAt = new Date();
+    message.content = 'This message was deleted';
+    await message.save();
+    await message.populate('sender', 'username avatar');
+
+    res.json(message);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

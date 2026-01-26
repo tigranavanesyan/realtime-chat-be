@@ -64,7 +64,7 @@ export const setupSocketIO = (io: Server) => {
     // Handle private message
     socket.on('send-message', async (data) => {
       try {
-        const { receiverId, content, type, fileUrl, fileName } = data;
+        const { receiverId, content, type, fileUrl, fileName, replyTo } = data;
 
         const message = new Message({
           sender: userId,
@@ -72,11 +72,22 @@ export const setupSocketIO = (io: Server) => {
           content,
           type: type || 'text',
           fileUrl,
-          fileName
+          fileName,
+          replyTo
         });
 
         await message.save();
         await message.populate('sender', 'username avatar');
+        if (message.replyTo) {
+          await message.populate({
+            path: 'replyTo',
+            select: 'content sender',
+            populate: {
+              path: 'sender',
+              select: 'username avatar'
+            }
+          });
+        }
 
         // Send to receiver
         io.to(`user:${receiverId}`).emit('receive-message', message);
@@ -91,7 +102,7 @@ export const setupSocketIO = (io: Server) => {
     // Handle group message
     socket.on('send-group-message', async (data) => {
       try {
-        const { groupId, content, type, fileUrl, fileName } = data;
+        const { groupId, content, type, fileUrl, fileName, replyTo } = data;
 
         const message = new Message({
           sender: userId,
@@ -99,16 +110,107 @@ export const setupSocketIO = (io: Server) => {
           content,
           type: type || 'text',
           fileUrl,
-          fileName
+          fileName,
+          replyTo
         });
 
         await message.save();
         await message.populate('sender', 'username avatar');
+        if (message.replyTo) {
+          await message.populate({
+            path: 'replyTo',
+            select: 'content sender',
+            populate: {
+              path: 'sender',
+              select: 'username avatar'
+            }
+          });
+        }
 
         // Send to all group members
         io.to(`group:${groupId}`).emit('receive-group-message', message);
       } catch (error) {
         socket.emit('error', { message: 'Failed to send group message' });
+      }
+    });
+
+    // Handle edit message
+    socket.on('edit-message', async (data) => {
+      try {
+        const { messageId, content } = data;
+
+        const message = await Message.findById(messageId);
+        if (!message) {
+          return socket.emit('error', { message: 'Message not found' });
+        }
+
+        // Check if user is the sender
+        if (message.sender.toString() !== userId) {
+          return socket.emit('error', { message: 'You can only edit your own messages' });
+        }
+
+        if (message.deleted) {
+          return socket.emit('error', { message: 'Cannot edit deleted message' });
+        }
+
+        message.content = content;
+        message.edited = true;
+        message.editedAt = new Date();
+        await message.save();
+        await message.populate('sender', 'username avatar');
+        if (message.replyTo) {
+          await message.populate({
+            path: 'replyTo',
+            select: 'content sender',
+            populate: {
+              path: 'sender',
+              select: 'username avatar'
+            }
+          });
+        }
+
+        // Emit to receiver or group
+        if (message.receiver) {
+          io.to(`user:${message.receiver}`).emit('message-edited', message);
+          socket.emit('message-edited', message);
+        } else if (message.group) {
+          io.to(`group:${message.group}`).emit('message-edited', message);
+        }
+      } catch (error) {
+        socket.emit('error', { message: 'Failed to edit message' });
+      }
+    });
+
+    // Handle delete message
+    socket.on('delete-message', async (data) => {
+      try {
+        const { messageId } = data;
+
+        const message = await Message.findById(messageId);
+        if (!message) {
+          return socket.emit('error', { message: 'Message not found' });
+        }
+
+        // Check if user is the sender
+        if (message.sender.toString() !== userId) {
+          return socket.emit('error', { message: 'You can only delete your own messages' });
+        }
+
+        message.deleted = true;
+        message.deletedAt = new Date();
+        message.content = 'This message was deleted';
+        await message.save();
+        await message.populate('sender', 'username avatar');
+
+        // Emit to receiver or group
+        if (message.receiver) {
+          io.to(`user:${message.receiver}`).emit('message-deleted', message);
+          socket.emit('message-deleted', message);
+        } else if (message.group) {
+          io.to(`group:${message.group}`).emit('message-deleted', message);
+        }
+      } catch (error) {
+        socket.emit('error', { message: 'Failed to delete message' });
       }
     });
 
